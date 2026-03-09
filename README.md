@@ -5,6 +5,16 @@
 1. [https://hzm0321.github.io/real-time-fund/](https://hzm0321.github.io/real-time-fund/)
 2. [https://fund.cc.cd/](https://fund.cc.cd/) （加速国内访问）
 
+## Star History
+
+<a href="https://www.star-history.com/?repos=hzm0321%2Freal-time-fund&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=hzm0321/real-time-fund&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=hzm0321/real-time-fund&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=hzm0321/real-time-fund&type=date&legend=top-left" />
+ </picture>
+</a>
+
 ## ✨ 特性
 
 - **实时估值**：通过输入基金编号，实时获取并展示基金的单位净值、估值净值及实时涨跌幅。
