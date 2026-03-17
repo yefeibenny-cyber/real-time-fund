@@ -627,7 +627,12 @@ export default function PcFundTable({
           const original = info.row.original || {};
           const code = original.code;
           const value = (code && (relatedSectorByCode?.[code] ?? relatedSectorCacheRef.current.get(code))) || '';
-          return value || '—';
+          const display = value || '—';
+          return (
+            <div style={{ width: '100%', textAlign: value ? 'left' : 'right', fontSize: '14px' }}>
+              {display}
+            </div>
+          );
         },
         meta: {
           align: 'right',
@@ -1196,7 +1201,6 @@ export default function PcFundTable({
                     const columnId = cell.column.id || cell.column.columnDef?.accessorKey;
                     const isNameColumn = columnId === 'fundName';
                     const rightAlignedColumns = new Set([
-                      'relatedSector',
                       'latestNav',
                       'estimateNav',
                       'yesterdayChangePercent',

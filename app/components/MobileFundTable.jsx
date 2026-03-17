@@ -715,7 +715,12 @@ export default function MobileFundTable({
           const original = info.row.original || {};
           const code = original.code;
           const value = (code && (relatedSectorByCode?.[code] ?? relatedSectorCacheRef.current.get(code))) || '';
-          return value || '—';
+          const display = value || '—';
+          return (
+            <div style={{ width: '100%', textAlign: value ? 'left' : 'right', fontSize: '12px' }}>
+              {display}
+            </div>
+          );
         },
         meta: { align: 'left', cellClassName: 'related-sector-cell', width: columnWidthMap.relatedSector ?? 120 },
       },
