@@ -2548,7 +2548,9 @@ input[type="number"] {
   pointer-events: none;
   padding: 0 20px calc(20px + env(safe-area-inset-bottom, 0px));
   box-sizing: border-box;
-  will-change: transform, opacity;
+  /* 提升合成层，减少 iOS/WebKit 下 fixed 随滚动错位 */
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
 }
