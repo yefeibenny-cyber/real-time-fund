@@ -2460,6 +2460,7 @@ export default function HomePage() {
 
   const handleAddFundsToGroup = (codes) => {
     if (!codes || codes.length === 0) return;
+    const gid = currentTab !== 'all' && currentTab !== 'fav' ? currentTab : null;
     const next = groups.map(g => {
       if (g.id === currentTab) {
         return {
@@ -2471,6 +2472,93 @@ export default function HomePage() {
     });
     setGroups(next);
     storageHelper.setItem('groups', JSON.stringify(next));
+
+    // 确保“添加到分组”仅增加分组内基金列表，不迁移任何持仓/交易/待定/定投等分组作用域数据
+    if (gid) {
+      const codeSet = new Set(codes.filter(Boolean));
+
+      setGroupHoldings((prev) => {
+        const bucket = prev?.[gid];
+        if (!bucket || typeof bucket !== 'object') return prev;
+        let changed = false;
+        const nextBucket = { ...bucket };
+        for (const c of codeSet) {
+          // 用 null 作为“显式未设置持仓”的哨兵值，避免 seedGroupHoldingsFromGlobal 用全局持仓回填
+          if (nextBucket[c] !== null) {
+            nextBucket[c] = null;
+            changed = true;
+          }
+        }
+        if (!changed) return prev;
+        const nextGh = { ...(prev || {}) };
+        nextGh[gid] = nextBucket;
+        storageHelper.setItem('groupHoldings', JSON.stringify(nextGh));
+        return nextGh;
+      });
+
+      setPendingTrades((prev) => {
+        const nextP = prev.filter((t) => !(codeSet.has(t.fundCode) && t.groupId === gid));
+        if (nextP.length === prev.length) return prev;
+        storageHelper.setItem('pendingTrades', JSON.stringify(nextP));
+        return nextP;
+      });
+
+      setTransactions((prev) => {
+        const out = { ...(prev || {}) };
+        let changed = false;
+        for (const c of codeSet) {
+          const list = out[c];
+          if (!Array.isArray(list) || list.length === 0) continue;
+          const filtered = list.filter((t) => t?.groupId !== gid);
+          if (filtered.length !== list.length) {
+            changed = true;
+            if (filtered.length) out[c] = filtered;
+            else delete out[c];
+          }
+        }
+        if (!changed) return prev;
+        storageHelper.setItem('transactions', JSON.stringify(out));
+        return out;
+      });
+
+      setDcaPlans((prev) => {
+        const scoped = migrateDcaPlansToScoped(prev);
+        const bucket = scoped?.[gid];
+        if (!bucket || typeof bucket !== 'object') return prev;
+        let changed = false;
+        const nextBucket = { ...bucket };
+        for (const c of codeSet) {
+          if (nextBucket[c] != null) {
+            delete nextBucket[c];
+            changed = true;
+          }
+        }
+        if (!changed) return prev;
+        const nextScoped = { ...scoped, [gid]: nextBucket };
+        storageHelper.setItem('dcaPlans', JSON.stringify(nextScoped));
+        return nextScoped;
+      });
+
+      try {
+        for (const c of codeSet) clearDailyEarnings(c, gid);
+        setFundDailyEarnings((prev) => {
+          if (!isPlainObject(prev) || !isPlainObject(prev[gid])) return prev;
+          let changed = false;
+          const nextBucket = { ...prev[gid] };
+          for (const c of codeSet) {
+            if (c in nextBucket) {
+              delete nextBucket[c];
+              changed = true;
+            }
+          }
+          if (!changed) return prev;
+          return { ...prev, [gid]: nextBucket };
+        });
+        const raw = localStorage.getItem('fundDailyEarnings') || '{}';
+        storageHelper.setItem('fundDailyEarnings', raw);
+      } catch { /* empty */ }
+    }
+
     setAddFundToGroupOpen(false);
     setSuccessModal({ open: true, message: `成功添加 ${codes.length} 支基金` });
   };
@@ -6010,7 +6098,44 @@ export default function HomePage() {
                 </motion.div>
               </AnimatePresence>
 
-              {/* 删除“添加基金到此分组”入口：分组加基金统一走搜索/导入 */}
+              {currentTab !== 'all' && currentTab !== 'fav' && (
+                <motion.button
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="button-dashed"
+                  onClick={() => setAddFundToGroupOpen(true)}
+                  style={{
+                    width: '100%',
+                    height: '48px',
+                    border: '2px dashed var(--border)',
+                    background: 'transparent',
+                    borderRadius: '12px',
+                    color: 'var(--muted)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    marginTop: '16px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    fontSize: '14px',
+                    fontWeight: 500
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--primary)';
+                    e.currentTarget.style.color = 'var(--primary)';
+                    e.currentTarget.style.background = 'rgba(34, 211, 238, 0.05)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--border)';
+                    e.currentTarget.style.color = 'var(--muted)';
+                    e.currentTarget.style.background = 'transparent';
+                  }}
+                >
+                  <PlusIcon width="18" height="18" />
+                  <span>添加基金到此分组</span>
+                </motion.button>
+              )}
             </>
           )}
         </div>
