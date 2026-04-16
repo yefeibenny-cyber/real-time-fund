@@ -154,6 +154,10 @@ export default function MyEarningsCalendarPage({ open, onOpenChange, series = []
       ? isMobile
       : (typeof window !== 'undefined' ? window.matchMedia?.('(max-width: 640px)')?.matches : false);
 
+  const pcCellDayFontSize = resolvedIsMobile ? 15 : 16;
+  const pcEarningsMaxFontSize = resolvedIsMobile ? 10 : 12;
+  const pcEarningsMinFontSize = resolvedIsMobile ? 6 : 8;
+
   const content = (
     <div className="my-earnings-drawer-inner flex min-h-0 flex-1 flex-col overflow-hidden px-5">
           {hasData && (
@@ -320,7 +324,7 @@ export default function MyEarningsCalendarPage({ open, onOpenChange, series = []
                           'flex-1 rounded-md text-[0.8rem] font-normal text-muted-foreground select-none',
                         week: 'mt-2 flex w-full',
                         day: cn(
-                          'relative aspect-square h-full w-full p-0 text-center select-none',
+                          'group/day relative aspect-square w-full overflow-hidden p-0 align-top text-center select-none',
                           '[&:last-child[data-selected=true]_button]:rounded-r-md'
                         ),
                         today: 'bg-transparent text-inherit',
@@ -359,21 +363,32 @@ export default function MyEarningsCalendarPage({ open, onOpenChange, series = []
                               day={day}
                               modifiers={modifiers}
                               {...props}
-                              style={{ ...(props.style || {}), borderRadius: 2 }}
+                              style={{
+                                ...(props.style || {}),
+                                borderRadius: 2,
+                                padding: 0,
+                                minHeight: 0,
+                                overflow: 'hidden',
+                              }}
                               className={cn(
                                 'my-earnings-cell',
-                                isOutside && 'my-earnings-cell-outside'
-                                ,
-                                '!min-w-0',
+                                isOutside && 'my-earnings-cell-outside',
+                                '!absolute !inset-0 !flex !h-full !w-full !max-h-full !max-w-full !min-h-0 !min-w-0 !box-border',
+                                'overflow-hidden !p-0 !gap-1 !leading-none',
                                 bgToneClass
                               )}
                             >
-                              <span className="my-earnings-cell-num">{isToday ? '今' : children}</span>
+                              <span
+                                className="my-earnings-cell-num"
+                                style={{ fontSize: pcCellDayFontSize }}
+                              >
+                                {isToday ? '今' : children}
+                              </span>
                               {showEarningsRow && (
                                 <FitText
                                   as="span"
-                                  maxFontSize={10}
-                                  minFontSize={7}
+                                  maxFontSize={pcEarningsMaxFontSize}
+                                  minFontSize={pcEarningsMinFontSize}
                                   className={cn(
                                     'my-earnings-cell-earnings',
                                     earningsTone === 'up' && 'up',
