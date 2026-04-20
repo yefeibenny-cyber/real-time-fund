@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { Plus, Tag, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -46,10 +46,10 @@ function normalizeTagDraft(raw) {
 /**
  * 编辑基金标签：PC 使用 Dialog，移动端使用底部 Drawer。
  * @param {Object} props
- * @param {{ name: string, theme: string }[]} [props.recommendedTagItems]
+ * @param {{ id?: string, name: string, theme: string }[]} [props.recommendedTagItems]
  * @param {(payload: { theme: string, name?: string, names?: string[] }) => void} [props.onAddPoolTag]
- * @param {(name: string) => void} [props.onDeleteGlobalTag]
- * @param {(name: string) => string[]} [props.getTagUsageLabels]
+ * @param {(tagId: string) => void} [props.onDeleteGlobalTag]
+ * @param {(tagId: string) => string[]} [props.getTagUsageLabels]
  */
 export default function FundTagsEditDialog({
   open,
@@ -70,6 +70,8 @@ export default function FundTagsEditDialog({
   const [addDialogPurpose, setAddDialogPurpose] = useState('fund');
   const [optionalEditMode, setOptionalEditMode] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  /** 防止快速连点可选标签，连续两次 setDraft 都基于旧 draft 导致重复添加 */
+  const optionalPickLockRef = useRef(false);
 
   const themeClassByKey = useMemo(() => {
     const map = new Map();
@@ -93,15 +95,29 @@ export default function FundTagsEditDialog({
   );
 
   const addTagsToFund = useCallback(
-    (rawNames, theme = DEFAULT_TAG_THEME) => {
+    (rawNames, theme = DEFAULT_TAG_THEME, preferredId) => {
       const normalizedTheme = ALLOWED_THEMES.has(theme) ? theme : DEFAULT_TAG_THEME;
+      const single = Array.isArray(rawNames) && rawNames.length === 1;
+      const poolId = single && String(preferredId ?? '').trim() ? String(preferredId).trim() : '';
+      /** id 必须在 setState updater 外生成：Strict Mode 会重复执行 updater，内部 uuid 会产生两个 id、两次 persist，全局 tags 出现两条 */
+      const rowsToAdd = [];
+      for (const raw of rawNames) {
+        const name = String(raw ?? '').trim();
+        if (!name || name.length > 24) continue;
+        let id = uuidv4();
+        if (single && poolId) {
+          id = poolId;
+        }
+        rowsToAdd.push({ id, name, theme: normalizedTheme });
+      }
+      if (!rowsToAdd.length) return;
+
       setDraft((prev) => {
         let next = [...prev];
-        for (const raw of rawNames) {
-          const name = String(raw ?? '').trim();
-          if (!name || name.length > 24) continue;
+        for (const row of rowsToAdd) {
           if (next.length >= 30) break;
-          next.push({ id: uuidv4(), name, theme: normalizedTheme });
+          if (next.some((x) => x.id === row.id)) continue;
+          next.push(row);
         }
         if (next.length === prev.length) return prev;
         persistDraft(next);
@@ -112,8 +128,8 @@ export default function FundTagsEditDialog({
   );
 
   const addTagToFund = useCallback(
-    (rawName, theme = DEFAULT_TAG_THEME) => {
-      addTagsToFund([rawName], theme);
+    (rawName, theme = DEFAULT_TAG_THEME, poolTagId) => {
+      addTagsToFund([rawName], theme, poolTagId);
     },
     [addTagsToFund],
   );
@@ -124,6 +140,7 @@ export default function FundTagsEditDialog({
     setOptionalEditMode(false);
     setDeleteConfirm(null);
     setAddDialogPurpose('fund');
+    optionalPickLockRef.current = false;
   // 仅在打开或切换基金时从 props 同步；不把 tags 列入依赖，避免父级刷新覆盖未提交的编辑
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, fundCode]);
@@ -177,12 +194,14 @@ export default function FundTagsEditDialog({
     [addDialogPurpose, onAddPoolTag, addTagsToFund],
   );
 
-  const removeTagFromFundIfHas = useCallback(
-    (tagName) => {
-      const nm = String(tagName ?? '').trim();
+  /** 删除全局可选池中的某条记录后，从当前草稿中移除同 id 的已选标签（支持可选池重名） */
+  const removeDraftTagByPoolId = useCallback(
+    (poolTagId) => {
+      const pid = String(poolTagId ?? '').trim();
+      if (!pid) return;
       setDraft((prev) => {
-        if (!prev.some((x) => x.name === nm)) return prev;
-        const next = prev.filter((x) => x.name !== nm);
+        if (!prev.some((x) => x.id === pid)) return prev;
+        const next = prev.filter((x) => x.id !== pid);
         persistDraft(next);
         return next;
       });
@@ -191,24 +210,27 @@ export default function FundTagsEditDialog({
   );
 
   const requestDeleteOptionalTag = useCallback(
-    (name) => {
-      const labels = getTagUsageLabels?.(name) ?? [];
+    (tagId, displayName) => {
+      const id = String(tagId ?? '').trim();
+      if (!id) return;
+      const name = String(displayName ?? '').trim();
+      const labels = getTagUsageLabels?.(id) ?? [];
       if (labels.length === 0) {
-        onDeleteGlobalTag?.(name);
-        removeTagFromFundIfHas(name);
+        onDeleteGlobalTag?.(id);
+        removeDraftTagByPoolId(id);
         return;
       }
-      setDeleteConfirm({ name, labels });
+      setDeleteConfirm({ tagId: id, name: name || '标签', labels });
     },
-    [getTagUsageLabels, onDeleteGlobalTag, removeTagFromFundIfHas],
+    [getTagUsageLabels, onDeleteGlobalTag, removeDraftTagByPoolId],
   );
 
   const confirmDeleteOptionalTag = useCallback(() => {
-    if (!deleteConfirm?.name) return;
-    onDeleteGlobalTag?.(deleteConfirm.name);
-    removeTagFromFundIfHas(deleteConfirm.name);
+    if (!deleteConfirm?.tagId) return;
+    onDeleteGlobalTag?.(deleteConfirm.tagId);
+    removeDraftTagByPoolId(deleteConfirm.tagId);
     setDeleteConfirm(null);
-  }, [deleteConfirm, onDeleteGlobalTag, removeTagFromFundIfHas]);
+  }, [deleteConfirm, onDeleteGlobalTag, removeDraftTagByPoolId]);
 
   const body = (
     <div className="flex min-w-0 flex-col gap-4">
@@ -293,25 +315,29 @@ export default function FundTagsEditDialog({
           </button>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {(recommendedTagItems || []).map((item) => {
+          {(recommendedTagItems || []).map((item, itemIndex) => {
             const label = String(item?.name ?? '').trim();
             if (!label) return null;
+            const poolTagId = String(item?.id ?? '').trim();
             const itemTheme = ALLOWED_THEMES.has(String(item.theme ?? '').trim())
               ? String(item.theme).trim()
               : DEFAULT_TAG_THEME;
             const themeClass = themeClassByKey.get(itemTheme) || '';
             const isDefault = itemTheme === DEFAULT_TAG_THEME;
-            const disabledPick = draft.length >= 30;
+            const alreadyInDraft = Boolean(
+              poolTagId && draft.some((t) => t.id === poolTagId),
+            );
+            const disabledPick = draft.length >= 30 || alreadyInDraft;
 
             if (optionalEditMode) {
               return (
                 <button
-                  key={label}
+                  key={poolTagId || `opt-${itemIndex}`}
                   type="button"
                   className="inline-flex"
                   title="删除标签"
                   aria-label={`删除标签 ${label}`}
-                  onClick={() => requestDeleteOptionalTag(label)}
+                  onClick={() => requestDeleteOptionalTag(poolTagId, label)}
                 >
                   <Badge
                     className={cn('cursor-pointer font-normal text-[13px]', themeClass)}
@@ -329,11 +355,18 @@ export default function FundTagsEditDialog({
 
             return (
               <button
-                key={label}
+                key={poolTagId || `opt-${itemIndex}`}
                 type="button"
                 className="inline-flex"
                 disabled={disabledPick}
-                onClick={() => addTagToFund(label, itemTheme)}
+                onClick={() => {
+                  if (disabledPick || optionalPickLockRef.current) return;
+                  optionalPickLockRef.current = true;
+                  addTagToFund(label, itemTheme, poolTagId);
+                  window.setTimeout(() => {
+                    optionalPickLockRef.current = false;
+                  }, 450);
+                }}
               >
                 <Badge
                   className={cn(

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Plus, Tag } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -157,11 +157,14 @@ export default function AddTagDialog({ open, onOpenChange, onAdd }) {
   const themeId = useId();
   const [name, setName] = useState('');
   const [themeKey, setThemeKey] = useState('default');
+  /** 防止连点「添加」导致 onAdd 执行两次、产生重复标签 */
+  const submitGuardRef = useRef(false);
 
   useEffect(() => {
     if (!open) return;
     setName('');
     setThemeKey('default');
+    submitGuardRef.current = false;
   }, [open]);
 
   const selectedTheme = useMemo(() => {
@@ -293,7 +296,8 @@ export default function AddTagDialog({ open, onOpenChange, onAdd }) {
             className="button inline-flex items-center justify-center gap-1.5"
             disabled={!canSubmit}
             onClick={() => {
-              if (!canSubmit) return;
+              if (!canSubmit || submitGuardRef.current) return;
+              submitGuardRef.current = true;
               onAdd?.({
                 names: parsedNames,
                 theme: themeKey,

@@ -3015,7 +3015,7 @@ export default function HomePage() {
       : fundTagRecords
           .filter((r) => getFundCodesFromTagRecord(r).includes(fc))
           .map((r) => ({
-            id: uuidv4(),
+            id: String(r.id ?? '').trim() || uuidv4(),
             name: String(r.name ?? '').trim(),
             theme: String(r.theme ?? '').trim() || DEFAULT_FUND_TAG_THEME,
           }))
@@ -3044,50 +3044,61 @@ export default function HomePage() {
         return next;
       });
 
-      const nameToTheme = new Map();
-      for (const { name, theme } of normalized) {
-        nameToTheme.set(name, theme);
-      }
-      const nameSet = new Set(normalized.map((x) => x.name));
-
       setFundTagRecords((prev) => {
-        const step1 = prev
-          .map((r) => {
-            const nm = String(r.name ?? '').trim();
-            if (!nm) return null;
-            let codes = getFundCodesFromTagRecord(r);
-            if (!nameSet.has(nm)) {
-              // 仅从当前基金解除关联，不删除全局标签记录（fundCodes 可为空，保留在可选池）
-              codes = codes.filter((c) => c !== fc);
-            }
-            return {
-              ...r,
-              name: nm,
-              theme: nameToTheme.get(nm) || (String(r.theme ?? '').trim() || DEFAULT_FUND_TAG_THEME),
-              fundCodes: codes.sort(),
-            };
-          })
-          .filter(Boolean);
-        const mergedByName = mergeTagRowsByName(step1);
-        const byName = new Map(mergedByName.map((r) => [String(r.name).trim(), r]));
-        for (const name of nameSet) {
-          const row = byName.get(name);
-          if (row) {
+        const selectedById = new Map(
+          normalized.map((x) => [String(x.id).trim(), x]).filter(([id]) => id),
+        );
+
+        const byId = new Map();
+        for (const r of prev) {
+          const id = String(r?.id ?? '').trim();
+          if (!id) continue;
+          byId.set(id, r);
+        }
+
+        for (const [id, row] of [...byId.entries()]) {
+          const nm = String(row.name ?? '').trim();
+          if (!nm) {
+            byId.delete(id);
+            continue;
+          }
+          const meta = selectedById.get(id);
+          if (meta) {
             let codes = getFundCodesFromTagRecord(row);
             if (!codes.includes(fc)) codes = [...codes, fc].sort();
-            byName.set(name, { ...row, fundCodes: codes, theme: nameToTheme.get(name) || row.theme });
-          } else {
-            byName.set(name, {
-              id: uuidv4(),
-              name,
-              theme: nameToTheme.get(name) || DEFAULT_FUND_TAG_THEME,
-              fundCodes: [fc],
+            const nextRow = sanitizeTagRowForStorage({
+              ...row,
+              id,
+              name: meta.name,
+              theme: meta.theme,
+              fundCodes: codes,
             });
+            if (nextRow) byId.set(id, nextRow);
+          } else {
+            const codes = getFundCodesFromTagRecord(row).filter((c) => c !== fc);
+            const nextRow = sanitizeTagRowForStorage({
+              ...row,
+              fundCodes: codes,
+            });
+            if (nextRow) byId.set(id, nextRow);
           }
         }
-        const next = Array.from(byName.values())
+
+        for (const [id, meta] of selectedById) {
+          if (byId.has(id)) continue;
+          const row = sanitizeTagRowForStorage({
+            id,
+            name: meta.name,
+            theme: meta.theme,
+            fundCodes: [fc],
+          });
+          if (row) byId.set(id, row);
+        }
+
+        const next = Array.from(byId.values())
           .map(sanitizeTagRowForStorage)
-          .filter(Boolean);
+          .filter(Boolean)
+          .sort((a, b) => String(a.id).localeCompare(String(b.id)));
         storageHelper.setItem('tags', JSON.stringify(next));
         return next;
       });
@@ -3095,7 +3106,7 @@ export default function HomePage() {
     [storageHelper],
   );
 
-  /** 仅写入可选池：新增无基金关联的标签，或更新已存在标签的主题（不改变 fundCodes） */
+  /** 仅写入可选池：每次新增一条独立记录（允许可选池内重名），不改变已有 fundCodes */
   const handleAddPoolTag = useCallback(
     (payload) => {
       const th = String(payload?.theme ?? '').trim() || DEFAULT_FUND_TAG_THEME;
@@ -3108,29 +3119,17 @@ export default function HomePage() {
       if (!rawNames.length) return;
 
       setFundTagRecords((prev) => {
-        let next = [...prev];
+        const next = [...prev];
         for (const nm of rawNames) {
           const name = String(nm ?? '').trim();
           if (!name) continue;
-          const existing = next.find((r) => String(r.name).trim() === name);
-          if (existing) {
-            next = next
-              .map((r) =>
-                String(r.name).trim() === name
-                  ? sanitizeTagRowForStorage({ ...r, theme: th })
-                  : r,
-              )
-              .filter(Boolean);
-          } else {
-            const row = sanitizeTagRowForStorage({
-              id: uuidv4(),
-              name,
-              theme: th,
-              fundCodes: [],
-            });
-            if (!row) continue;
-            next.push(row);
-          }
+          const row = sanitizeTagRowForStorage({
+            id: uuidv4(),
+            name,
+            theme: th,
+            fundCodes: [],
+          });
+          if (row) next.push(row);
         }
         storageHelper.setItem('tags', JSON.stringify(next));
         return next;
@@ -3139,25 +3138,41 @@ export default function HomePage() {
     [storageHelper],
   );
 
-  /** 从全局 tags 存储中移除该标签（所有基金上的该标签一并消失） */
+  /** 从全局 tags 存储中按 id 移除该条标签记录，并清理各基金已选列表中的同 id 引用 */
   const handleDeleteGlobalTag = useCallback(
-    (name) => {
-      const nm = String(name ?? '').trim();
-      if (!nm) return;
+    (tagId) => {
+      const id = String(tagId ?? '').trim();
+      if (!id) return;
       setFundTagRecords((prev) => {
-        const next = prev.filter((r) => String(r.name).trim() !== nm);
+        const next = prev.filter((r) => String(r.id).trim() !== id);
         storageHelper.setItem('tags', JSON.stringify(next));
+        return next;
+      });
+      setFundTagListsByCode((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const [code, list] of Object.entries(next)) {
+          if (!Array.isArray(list)) continue;
+          const filtered = list.filter((t) => String(t?.id ?? '').trim() !== id);
+          if (filtered.length !== list.length) {
+            changed = true;
+            if (filtered.length === 0) delete next[code];
+            else next[code] = filtered;
+          }
+        }
+        if (!changed) return prev;
+        storageHelper.setItem('fundTagLists', JSON.stringify(next));
         return next;
       });
     },
     [storageHelper],
   );
 
-  /** 删除前展示：该标签关联的基金文案列表 */
+  /** 删除前展示：该标签关联的基金文案列表（按标签 id） */
   const getTagUsageLabels = useCallback(
-    (tagName) => {
-      const nm = String(tagName ?? '').trim();
-      const row = fundTagRecords.find((r) => String(r.name).trim() === nm);
+    (tagId) => {
+      const id = String(tagId ?? '').trim();
+      const row = fundTagRecords.find((r) => String(r.id).trim() === id);
       if (!row) return [];
       const codes = getFundCodesFromTagRecord(row);
       return codes.map((c) => {
@@ -6547,7 +6562,10 @@ export default function HomePage() {
             });
             if (row) byId.set(id, row);
           }
-          const mergedTags = mergeTagRowsByName(Array.from(byId.values()));
+          const mergedTags = Array.from(byId.values())
+            .map(sanitizeTagRowForStorage)
+            .filter(Boolean)
+            .sort((a, b) => String(a.id).localeCompare(String(b.id)));
           setFundTagRecords(mergedTags);
           storageHelper.setItem('tags', JSON.stringify(mergedTags));
         }
@@ -8310,6 +8328,7 @@ export default function HomePage() {
             tags={fundTagsEdit.tags}
             onSave={handleSaveFundTags}
             recommendedTagItems={fundTagRecords.map((r) => ({
+              id: String(r?.id ?? '').trim(),
               name: String(r?.name ?? '').trim(),
               theme: String(r?.theme ?? '').trim() || DEFAULT_FUND_TAG_THEME,
             })).filter((x) => x.name)}
